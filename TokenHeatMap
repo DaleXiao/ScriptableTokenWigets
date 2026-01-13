@@ -1,0 +1,336 @@
+const API_URL = "Your API Endpoint";
+const API_KEY = "Your API Key";
+
+const CACHE_FILE = "token_history_braun_api_v7.json";
+
+const BRAUN = {
+  orange: new Color("#ea5b0c"),
+  dark: {
+    bg: new Color("#161616"),
+    surface: new Color("#222222"),
+    text: new Color("#e0e0e0"),
+    bar: new Color("#3a3a3a"),
+    grid: new Color("#2a2a2a"),
+    axis: new Color("#6a6a6a"),
+    capsuleBg: new Color("#333333"),
+    capsuleText: new Color("#ffffff")
+  },
+  light: {
+    bg: new Color("#f4f4f4"),
+    surface: new Color("#ffffff"),
+    text: new Color("#111111"),
+    bar: new Color("#d8d8d8"),
+    grid: new Color("#e5e5e5"),
+    axis: new Color("#8d8d8d"),
+    capsuleBg: new Color("#000000"),
+    capsuleText: new Color("#ffffff")
+  }
+};
+
+if (config.runsInWidget) {
+  const widget = await createWidget();
+  Script.setWidget(widget);
+} else {
+  const widget = await createWidget();
+  await widget.presentMedium();
+}
+Script.complete();
+
+async function createWidget() {
+  const w = new ListWidget();
+  w.backgroundColor = Color.dynamic(BRAUN.light.bg, BRAUN.dark.bg);
+  w.backgroundImage = createUnifiedStripes();
+  w.setPadding(12, 10, 8, 10);
+
+  const data = await get7DayData();
+
+  const header = w.addStack();
+  header.layoutHorizontally();
+  header.addSpacer();
+  const title = header.addText("本周每日 Token 使用情况");
+  title.font = Font.heavySystemFont(10);
+  title.textColor = new Color("#888888");
+  header.addSpacer();
+
+  w.addSpacer(4);
+
+  const chart = drawBraunChart(data);
+  const img = w.addImage(chart);
+  img.centerAlignImage();
+
+  w.addSpacer();
+  return w;
+}
+
+function drawBraunChart(data) {
+  const isDark = Device.isUsingDarkAppearance();
+  const palette = isDark ? BRAUN.dark : BRAUN.light;
+  const capsuleBgColor = palette.capsuleBg;
+  const capsuleTextColor = palette.capsuleText;
+
+  const W = 1200;
+  const H = 600;
+
+  const ctx = new DrawContext();
+  ctx.size = new Size(W, H);
+  ctx.opaque = false;
+  ctx.respectScreenScale = false;
+
+  const margin = { top: 70, bottom: 90, left: 40, right: 40 };
+  const graphW = W - margin.left - margin.right;
+  const graphH = H - margin.top - margin.bottom;
+
+  const vals = data.map(d => Number(d.val) || 0);
+  const maxVal = Math.max(...vals, 0);
+  const { step, maxScale } = niceScale(maxVal);
+
+  const gridCount = Math.max(2, Math.round(maxScale / step));
+  for (let i = 0; i <= gridCount; i++) {
+    const v = i * step;
+    const y = margin.top + graphH - (v / maxScale) * graphH;
+
+    const p = new Path();
+    p.move(new Point(margin.left, y));
+    p.addLine(new Point(W - margin.right, y));
+
+    if (i === 0) {
+      ctx.setStrokeColor(palette.axis);
+      ctx.setLineWidth(4);
+    } else {
+      ctx.setStrokeColor(palette.grid);
+      ctx.setLineWidth(2);
+    }
+    ctx.addPath(p);
+    ctx.strokePath();
+  }
+
+  const numBars = Math.max(1, data.length);
+  const rawBarW = graphW / (numBars * 2.2);
+  const barWidth = clamp(Math.round(rawBarW), 36, 78);
+  const totalBarW = numBars * barWidth;
+  const gap = (graphW - totalBarW) / (numBars + 1);
+
+  const linkColor = isDark ? new Color("#ffffff", 0.22) : new Color("#000000", 0.16);
+  const todayIndex = numBars - 1;
+
+  for (let i = 0; i < numBars; i++) {
+    const item = data[i];
+    const v = Math.max(0, Number(item.val) || 0);
+
+    const x = margin.left + gap + i * (barWidth + gap);
+    const h = (v / maxScale) * graphH;
+    const barH = v > 0 ? Math.max(2, h) : 0;
+    const y = margin.top + graphH - barH;
+
+    const isToday = i === todayIndex;
+    const fill = isToday ? BRAUN.orange : palette.bar;
+
+    drawTopRoundedBar(ctx, new Rect(x, y, barWidth, barH), fill, 14);
+
+    if (isToday) {
+      const valStr = formatToM(v);
+
+      ctx.setFont(Font.heavySystemFont(36));
+      const tSize = safeTextSize(ctx, valStr);
+
+      const padX = 18, padY = 10;
+      const tagW = Math.ceil(tSize.width + padX * 2);
+      const tagH = Math.ceil(tSize.height + padY * 2);
+
+      let tagX = x + barWidth / 2 - tagW / 2;
+      tagX = clamp(tagX, margin.left, W - margin.right - tagW);
+
+      let tagY = y - tagH - 16;
+      tagY = Math.max(6, tagY);
+
+      const midX = x + barWidth / 2;
+      const lineTop = tagY + tagH;
+      const lineBot = y - 6;
+      if (lineBot > lineTop + 4) {
+        const lp = new Path();
+        lp.move(new Point(midX, lineTop));
+        lp.addLine(new Point(midX, lineBot));
+        ctx.setStrokeColor(linkColor);
+        ctx.setLineWidth(3);
+        ctx.addPath(lp);
+        ctx.strokePath();
+      }
+
+      const tagRect = new Rect(tagX, tagY, tagW, tagH);
+      const tagPath = new Path();
+
+      const capsuleRadius = clamp(Math.floor(tagH * 0.3), 12, Math.floor(tagH / 2));
+      tagPath.addRoundedRect(tagRect, capsuleRadius, capsuleRadius);
+
+      ctx.setFillColor(capsuleBgColor);
+      ctx.addPath(tagPath);
+      ctx.fillPath();
+
+      ctx.setTextColor(capsuleTextColor);
+      const ts = safeTextSize(ctx, valStr);
+      const textX = tagX + (tagW - ts.width) / 2;
+      const textY = tagY + (tagH - ts.height) / 2;
+
+      ctx.drawText(valStr, new Point(textX, textY - 3));
+    }
+
+    ctx.setFont(Font.systemFont(30));
+    ctx.setTextColor(palette.axis);
+    ctx.setTextAlignedCenter();
+    const dateLabel = normalizeToMMDD(item.date);
+    const dateRect = new Rect(x - 18, margin.top + graphH + 18, barWidth + 36, 44);
+    ctx.drawTextInRect(dateLabel, dateRect);
+  }
+
+  return ctx.getImage();
+}
+
+function drawTopRoundedBar(ctx, rect, color, radius) {
+  if (rect.height <= 0 || rect.width <= 0) return;
+
+  const r = Math.min(radius, rect.width / 2, rect.height / 2);
+
+  const p = new Path();
+  p.addRoundedRect(rect, r, r);
+  ctx.setFillColor(color);
+  ctx.addPath(p);
+  ctx.fillPath();
+
+  const coverY = rect.y + r;
+  const coverH = Math.max(0, rect.height - r);
+  if (coverH > 0) {
+    ctx.fillRect(new Rect(rect.x, coverY, rect.width, coverH));
+  }
+}
+
+function createUnifiedStripes() {
+  const ctx = new DrawContext();
+  ctx.size = new Size(1200, 600);
+  ctx.opaque = false;
+  ctx.respectScreenScale = false;
+
+  const lightColor = new Color("#000000", 0.04);
+  const darkColor = new Color("#ffffff", 0.05);
+  const stripeColor = Color.dynamic(lightColor, darkColor);
+
+  const gap = 12;
+  const lineWidth = 3;
+
+  ctx.setFillColor(stripeColor);
+  for (let x = 0; x < ctx.size.width; x += gap) {
+    ctx.fillRect(new Rect(x, 0, lineWidth, ctx.size.height));
+  }
+  return ctx.getImage();
+}
+
+function formatToM(num) {
+  const n = Number(num) || 0;
+  return (n / 1e6).toFixed(1) + "M";
+}
+
+function niceScale(maxVal) {
+  const minScale = 100000;
+  const m = Math.max(Number(maxVal) || 0, minScale);
+
+  const targetLines = 5;
+  const rawStep = m / targetLines;
+
+  const step = niceStep(rawStep);
+  let maxScale = Math.ceil(m / step) * step;
+
+  maxScale = Math.ceil(maxScale * 1.06);
+  maxScale = Math.ceil(maxScale / step) * step;
+
+  return { step, maxScale };
+}
+
+function niceStep(x) {
+  const exp = Math.floor(Math.log10(x));
+  const base = x / Math.pow(10, exp);
+  let niceBase;
+
+  if (base <= 1) niceBase = 1;
+  else if (base <= 2) niceBase = 2;
+  else if (base <= 5) niceBase = 5;
+  else niceBase = 10;
+
+  return niceBase * Math.pow(10, exp);
+}
+
+async function get7DayData() {
+  const fm = FileManager.local();
+  const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_FILE);
+
+  let history = [];
+
+  try {
+    const req = new Request(API_URL);
+    req.headers = { "X-N8N-API-KEY": API_KEY };
+    req.timeoutInterval = 8;
+
+    const json = await req.loadJSON();
+
+    let raw = [];
+    if (json && Array.isArray(json.history_7d)) raw = json.history_7d;
+    else if (Array.isArray(json)) raw = json;
+    else if (json) raw = [json];
+
+    history = raw
+      .map(item => {
+        const val = item?.val ?? item?.today ?? item?.tokens ?? 0;
+        const dateStr = item?.date ?? formatMMDD(new Date());
+        return { date: normalizeToMMDD(dateStr), val: toInt(val) };
+      })
+      .filter(x => x.date && Number.isFinite(x.val));
+
+    history.sort((a, b) => (a.date > b.date ? 1 : -1));
+    if (history.length > 7) history = history.slice(history.length - 7);
+
+    if (history.length > 0) fm.writeString(cachePath, JSON.stringify(history));
+  } catch (e) {
+    if (fm.fileExists(cachePath)) {
+      try { history = JSON.parse(fm.readString(cachePath)) || []; } catch (_) {}
+    }
+  }
+
+  if (!history || history.length === 0) return [{ date: "Demo", val: 1000000 }];
+  return history;
+}
+
+function normalizeToMMDD(s) {
+  if (!s) return formatMMDD(new Date());
+  const str = String(s).trim();
+
+  if (/^\d{2}-\d{2}$/.test(str)) return str;
+
+  const m1 = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m1) return `${m1[2]}-${m1[3]}`;
+
+  const m2 = str.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (m2) return `${m2[2]}-${m2[3]}`;
+
+  return str.slice(0, 5);
+}
+
+function formatMMDD(date) {
+  const df = new DateFormatter();
+  df.dateFormat = "MM-dd";
+  return df.string(date);
+}
+
+function toInt(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n));
+}
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
+function safeTextSize(ctx, text) {
+  try {
+    if (typeof ctx.sizeOfText === "function") return ctx.sizeOfText(text);
+  } catch (_) {}
+  return new Size(text.length * 22, 38);
+}
