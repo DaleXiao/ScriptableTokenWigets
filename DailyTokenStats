@@ -1,0 +1,213 @@
+const API_URL = "Your API Endpoint";
+const API_KEY = "Your API Key";
+
+const BG_COLOR = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
+const TEXT_COLOR = Color.dynamic(new Color("#000000"), new Color("#ffffff"));
+const ACCENT_COLOR = new Color("#FF5000");
+const UP_COLOR = new Color("#ff3b30");
+const DOWN_COLOR = new Color("#34c759");
+const LINE_COLOR = new Color("#ff3b30");
+
+if (config.runsInWidget) {
+  let widget = await createWidget();
+  Script.setWidget(widget);
+} else {
+  let widget = await createWidget();
+  widget.presentSmall();
+}
+Script.complete();
+
+async function createWidget() {
+  let w = new ListWidget();
+  w.backgroundColor = BG_COLOR;
+  w.backgroundImage = createTransparentStripes();
+  w.setPadding(12, 6, 12, 10);
+
+  let tokens = "Wait";
+  let diff = 0;
+  let showDiff = false;
+  let yearVal = 0;
+  let todayVal = 0;
+  let yesterdayVal = 0;
+  let hasData = false;
+
+  try {
+    let data = await fetchStatsData();
+    if (data) {
+      todayVal = (data.today !== undefined) ? data.today : (data.today_total || 0);
+      yesterdayVal = data.yesterday || 0;
+      yearVal = data.year_total || 0;
+      tokens = todayVal.toString();
+      hasData = true;
+
+      if (data.yesterday !== undefined) {
+        diff = todayVal - yesterdayVal;
+        showDiff = true;
+      }
+    }
+  } catch (e) {
+    tokens = "Error";
+    console.error("Data Load Failed: " + e.message);
+  }
+
+  let totalHeight = showDiff ? 90 : 80;
+
+  w.addSpacer();
+
+  let mainStack = w.addStack();
+  mainStack.layoutHorizontally();
+  mainStack.centerAlignContent();
+
+  let lineStack = mainStack.addStack();
+  lineStack.size = new Size(2, totalHeight);
+  lineStack.backgroundColor = LINE_COLOR;
+  lineStack.cornerRadius = 1;
+
+  mainStack.addSpacer(8);
+
+  let contentStack = mainStack.addStack();
+  contentStack.layoutVertically();
+
+  let titleRow = contentStack.addStack();
+  titleRow.layoutHorizontally();
+  titleRow.centerAlignContent();
+
+  let title = titleRow.addText("今日 Token 使用");
+  title.font = Font.boldSystemFont(11);
+  title.textColor = ACCENT_COLOR;
+
+  if (hasData && tokens !== "Error") {
+    titleRow.addSpacer(6);
+
+    let tagConfig = { bg: new Color("#8E8E93"), text: "低" };
+    
+    if (todayVal > 1000000) {
+      tagConfig = { bg: new Color("#FF3B30"), text: "高" };
+    } else if (todayVal >= 500000) {
+      tagConfig = { bg: new Color("#34C759"), text: "中" };
+    }
+
+    let tagStack = titleRow.addStack();
+    tagStack.backgroundColor = tagConfig.bg;
+    tagStack.cornerRadius = 3;
+    tagStack.setPadding(1, 4, 1, 4);
+
+    let tagLabel = tagStack.addText(tagConfig.text);
+    tagLabel.font = Font.boldSystemFont(8);
+    tagLabel.textColor = Color.white();
+  }
+
+  contentStack.addSpacer(4);
+
+  let num = contentStack.addText(formatNumber(tokens));
+  num.font = Font.heavySystemFont(23);
+  num.textColor = TEXT_COLOR;
+  num.minimumScaleFactor = 0.5;
+
+  contentStack.addSpacer(4);
+
+  if (showDiff) {
+    let symbol = diff > 0 ? "▲" : (diff < 0 ? "▼" : "-");
+    let trendColor = diff > 0 ? UP_COLOR : (diff < 0 ? DOWN_COLOR : Color.gray());
+
+    let percentStr = "";
+    if (yesterdayVal > 0) {
+      let p = (diff / yesterdayVal) * 100;
+      percentStr = `${Math.abs(p).toFixed(0)}%`;
+    }
+
+    let diffStack = contentStack.addStack();
+    diffStack.layoutHorizontally();
+    diffStack.centerAlignContent();
+
+    let labelStatic = diffStack.addText("对比昨日: ");
+    labelStatic.font = Font.systemFont(10);
+    labelStatic.textColor = Color.gray();
+
+    let valueLabel = diffStack.addText(`${symbol} ${formatNumber(Math.abs(diff).toString())}`);
+    valueLabel.font = Font.systemFont(10);
+    valueLabel.textColor = trendColor;
+
+    if (percentStr !== "") {
+      diffStack.addSpacer(6);
+
+      let pStack = diffStack.addStack();
+      pStack.backgroundColor = trendColor;
+      pStack.cornerRadius = 3;
+      pStack.setPadding(1, 3, 1, 3);
+
+      let pLabel = pStack.addText(percentStr);
+      pLabel.font = Font.systemFont(8);
+      pLabel.textColor = Color.white();
+    }
+
+    contentStack.addSpacer(2);
+  }
+
+  let yearText = contentStack.addText(`今年总计: ${formatNumber(yearVal.toString())}`);
+  yearText.font = Font.systemFont(10);
+  yearText.textColor = Color.gray();
+
+  contentStack.addSpacer(2);
+
+  let df = new DateFormatter();
+  df.dateFormat = "YYYY-MM-dd HH:mm";
+  let dateText = contentStack.addText("更新时间: " + df.string(new Date()));
+  dateText.font = Font.systemFont(10);
+  dateText.textColor = Color.gray();
+  dateText.textOpacity = 0.3;
+
+  w.addSpacer();
+
+  return w;
+}
+
+async function fetchStatsData() {
+  const fm = FileManager.local();
+  const cachePath = fm.joinPath(fm.documentsDirectory(), "token_stats_cache.json");
+  
+  try {
+    let req = new Request(API_URL);
+    req.headers = { "X-N8N-API-KEY": API_KEY };
+    req.timeoutInterval = 10;
+    
+    let json = await req.loadJSON();
+    // === 添加这行 Debug ===
+    console.log("API 原始返回: " + JSON.stringify(json, null, 2)); 
+    // ====================
+    let data = Array.isArray(json) ? json[0] : json;
+    
+    fm.writeString(cachePath, JSON.stringify(data));
+    return data;
+    
+  } catch (e) {
+    console.log("Network failed, trying cache...");
+
+    if (fm.fileExists(cachePath)) {
+      let cachedStr = fm.readString(cachePath);
+      return JSON.parse(cachedStr);
+    } else {
+      throw e;
+    }
+  }
+}
+
+
+function formatNumber(str) {
+  return str.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function createTransparentStripes() {
+  const ctx = new DrawContext();
+  const size = new Size(400, 400);
+  ctx.size = size;
+  ctx.opaque = false;
+  const neutralStripeColor = new Color("#888888", 0.04);
+  const gap = 8;
+  const lineWidth = 2;
+  ctx.setFillColor(neutralStripeColor);
+  for (let x = 0; x < size.width; x += gap) {
+    ctx.fillRect(new Rect(x, 0, lineWidth, size.height));
+  }
+  return ctx.getImage();
+}
