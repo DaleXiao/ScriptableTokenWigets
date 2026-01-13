@@ -1,0 +1,298 @@
+const API_URL = "Your API Endpoint";
+const API_KEY = "Your API Key";
+
+const DAILY_GOAL = 1500000;
+
+const FORCE_APPEARANCE = null;
+
+const REFRESH_MINUTES = 10;
+const CACHE_FILE_NAME = "token_today_ring_v6_visible_stripes.json";
+
+const PALETTE = {
+  light: {
+    bg: new Color("#ffffff"),
+    textMain: new Color("#111111"),
+    textSub: new Color("#666666"),
+    ringBg: new Color("#f2d6dd"),
+    ringMain: new Color("#fa114f"),
+    ringShadow: new Color("#000000", 0.18),
+    success: new Color("#0a7f2e")
+  },
+  dark: {
+    bg: new Color("#000000"),
+    textMain: new Color("#ffffff"),
+    textSub: new Color("#888888"),
+    ringBg: new Color("#280c13"),
+    ringMain: new Color("#fa114f"),
+    ringShadow: new Color("#000000", 0.5),
+    success: new Color("#d4fc79")
+  }
+};
+
+const dyn = (lightColor, darkColor) => {
+  if (FORCE_APPEARANCE === "light") return lightColor;
+  if (FORCE_APPEARANCE === "dark") return darkColor;
+  return Color.dynamic(lightColor, darkColor);
+};
+
+const THEME = {
+  bg: dyn(PALETTE.light.bg, PALETTE.dark.bg),
+  textMain: dyn(PALETTE.light.textMain, PALETTE.dark.textMain),
+  textSub: dyn(PALETTE.light.textSub, PALETTE.dark.textSub),
+  success: dyn(PALETTE.light.success, PALETTE.dark.success)
+};
+
+const RING = {
+  bg: dyn(PALETTE.light.ringBg, PALETTE.dark.ringBg),
+  main: PALETTE.light.ringMain,
+  shadow: dyn(PALETTE.light.ringShadow, PALETTE.dark.ringShadow)
+};
+
+if (config.runsInWidget) {
+  const widget = await createWidget();
+  Script.setWidget(widget);
+} else {
+  const widget = await createWidget();
+  widget.presentSmall();
+}
+Script.complete();
+
+async function createWidget() {
+  const w = new ListWidget();
+  w.backgroundColor = THEME.bg;
+  
+  w.backgroundImage = createVisibleStripes();
+  
+  w.setPadding(10, 10, 10, 10);
+  w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
+
+  const { val: currentVal } = await getTodayData();
+
+  const percentRaw = currentVal / DAILY_GOAL;
+  const percent = clamp(percentRaw, 0, 2);
+  const isGoalMet = percentRaw >= 1;
+
+  const header = w.addStack();
+  header.centerAlignContent();
+
+  const title = header.addText("今日 Token 使用量");
+  title.font = Font.heavySystemFont(10);
+  title.textColor = THEME.textMain;
+  header.addSpacer();
+
+  w.addSpacer(6);
+
+  const ringImg = drawActivityRing(percent);
+
+  const content = w.addStack();
+  content.layoutHorizontally();
+  content.addSpacer();
+  const img = content.addImage(ringImg);
+  img.imageSize = new Size(86, 86);
+  content.addSpacer();
+
+  w.addSpacer(8);
+
+  const footer = w.addStack();
+  footer.layoutVertically();
+
+  if (isGoalMet) {
+    addCenteredText(footer, "目标达成", Font.heavySystemFont(11), THEME.success);
+    footer.addSpacer(2);
+    addCenteredText(footer, formatM(currentVal), Font.systemFont(10), THEME.textSub);
+  } else {
+    addCenteredText(
+      footer,
+      `${(percentRaw * 100).toFixed(0)}%`,
+      new Font("Menlo-Bold", 18),
+      THEME.textMain
+    );
+    footer.addSpacer(2);
+    addCenteredText(
+      footer,
+      `${formatM(currentVal)} / ${formatM(DAILY_GOAL)}`,
+      Font.systemFont(9),
+      THEME.textSub
+    );
+  }
+
+  return w;
+}
+
+function addCenteredText(parent, text, font, color) {
+  const s = parent.addStack();
+  s.layoutHorizontally();
+  s.addSpacer();
+  const t = s.addText(text);
+  t.font = font;
+  t.textColor = color;
+  s.addSpacer();
+  return t;
+}
+
+function createVisibleStripes() {
+  const size = 400; 
+  const ctx = new DrawContext();
+  ctx.size = new Size(size, size);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+
+  const stripeColor = Color.dynamic(
+    new Color("#000000", 0.02),
+    new Color("#ffffff", 0.06)
+  );
+
+  const lineWidth = 3; 
+  const gap = 8;
+
+  ctx.setFillColor(stripeColor);
+  
+  for (let x = 0; x < size; x += gap) {
+    ctx.fillRect(new Rect(x, 0, lineWidth, size));
+  }
+
+  return ctx.getImage();
+}
+
+function drawActivityRing(percent) {
+  const size = 260;
+  const ctx = new DrawContext();
+  ctx.size = new Size(size, size);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+
+  if (ctx.setLineCap) ctx.setLineCap("round");
+  if (ctx.setLineJoin) ctx.setLineJoin("round");
+
+  const center = new Point(size / 2, size / 2);
+  const radius = Math.round(size * 0.36);
+  const strokeWidth = Math.round(size * 0.14);
+
+  ctx.setStrokeColor(RING.bg);
+  ctx.setLineWidth(strokeWidth);
+  const track = new Path();
+  track.addEllipse(new Rect(center.x - radius, center.y - radius, radius * 2, radius * 2));
+  ctx.addPath(track);
+  ctx.strokePath();
+
+  const startDeg = -90;
+  const base = clamp(percent, 0, 1);
+  const extra = clamp(percent - 1, 0, 1);
+
+  if (base > 0) {
+    stampArc(ctx, center, radius, strokeWidth, startDeg, base * 360, RING.main);
+
+    if (base >= 1) {
+      const endPt = pointOnCircle(center, radius, deg2rad(startDeg + 360));
+      fillCircle(ctx, new Point(endPt.x + 3, endPt.y), strokeWidth / 2, RING.shadow);
+      fillCircle(ctx, endPt, strokeWidth / 2, RING.main);
+    }
+  }
+
+  if (extra > 0) {
+    stampArc(ctx, center, radius, strokeWidth, startDeg, extra * 360, RING.main);
+    const endPt2 = pointOnCircle(center, radius, deg2rad(startDeg + extra * 360));
+    fillCircle(ctx, endPt2, strokeWidth / 2, RING.main);
+  }
+
+  return ctx.getImage();
+}
+
+function stampArc(ctx, center, radius, strokeWidth, startDeg, sweepDeg, color) {
+  if (sweepDeg <= 0.0001) return;
+
+  const rDot = strokeWidth / 2;
+  const stepDeg = Math.max(0.45, 120 / (Math.PI * Math.max(1, radius)));
+
+  ctx.setFillColor(color);
+
+  const endDeg = startDeg + sweepDeg;
+  for (let deg = startDeg; deg <= endDeg; deg += stepDeg) {
+    const rad = deg2rad(deg);
+    const x = center.x + radius * Math.cos(rad);
+    const y = center.y + radius * Math.sin(rad);
+    ctx.fillEllipse(new Rect(x - rDot, y - rDot, rDot * 2, rDot * 2));
+  }
+
+  const endRad = deg2rad(endDeg);
+  const ex = center.x + radius * Math.cos(endRad);
+  const ey = center.y + radius * Math.sin(endRad);
+  ctx.fillEllipse(new Rect(ex - rDot, ey - rDot, rDot * 2, rDot * 2));
+}
+
+function fillCircle(ctx, center, radius, color) {
+  ctx.setFillColor(color);
+  ctx.fillEllipse(new Rect(center.x - radius, center.y - radius, radius * 2, radius * 2));
+}
+
+function pointOnCircle(center, radius, rad) {
+  return new Point(center.x + radius * Math.cos(rad), center.y + radius * Math.sin(rad));
+}
+
+function deg2rad(deg) {
+  return deg * (Math.PI / 180);
+}
+
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
+}
+
+async function getTodayData() {
+  const fm = FileManager.local();
+  const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_FILE_NAME);
+
+  let todayVal = 0;
+  try {
+    const req = new Request(API_URL);
+    req.headers = { 
+        "X-N8N-API-KEY": API_KEY,
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Accept": "application/json"
+    };
+    req.timeoutInterval = 15;
+
+    console.log("Fetching today's data...");
+    const rawString = await req.loadString();
+
+    if (rawString.includes("Authorization data is wrong")) {
+        throw new Error("API Key 错误");
+    }
+
+    const json = JSON.parse(rawString);
+    todayVal = extractTodayVal(json);
+
+    if (todayVal > 0) {
+        fm.writeString(cachePath, JSON.stringify({ val: todayVal, ts: Date.now() }));
+    }
+  } catch (e) {
+    console.error("Fetch failed: " + e.message);
+    if (fm.fileExists(cachePath)) {
+      try {
+        const cached = JSON.parse(fm.readString(cachePath));
+        todayVal = cached?.val ? cached.val : 0;
+      } catch {}
+    }
+  }
+
+  return { val: Number.parseInt(todayVal, 10) || 0 };
+}
+
+function extractTodayVal(json) {
+  if (!json) return 0;
+  const root = Array.isArray(json) && json.length > 0 ? json[0] : json;
+  
+  if (root.today !== undefined && root.today !== null) {
+      return root.today;
+  }
+  if (Array.isArray(root.history_7d) && root.history_7d.length > 0) {
+    const last = root.history_7d[root.history_7d.length - 1];
+    return last?.val || 0;
+  }
+  return 0;
+}
+
+function formatM(num) {
+  const n = Number(num) || 0;
+  const s = (n / 1_000_000).toFixed(1);
+  return s.replace(/\.0$/, "") + "M";
+}
