@@ -5,6 +5,7 @@
 ### Backend API
 - Backend is powered by n8n, therefore you need to have your own n8n setups, or your own API to serve the data.
 
+### Widget Example
 <img src="https://github.com/user-attachments/assets/bb9202f5-00af-4bcd-a263-47ca2f52c693"
      alt="IMG_7520"
      width="300" />
