@@ -75,7 +75,7 @@ async function createWidget() {
   const header = w.addStack();
   header.centerAlignContent();
 
-  const title = header.addText("今日 Token 使用量");
+  const title = header.addText("今日 Token 使用进展");
   title.font = Font.heavySystemFont(10);
   title.textColor = THEME.textMain;
   header.addSpacer();
@@ -111,7 +111,7 @@ async function createWidget() {
     addCenteredText(
       footer,
       `${formatM(currentVal)} / ${formatM(DAILY_GOAL)}`,
-      Font.systemFont(9),
+      Font.systemFont(8),
       THEME.textSub
     );
   }
