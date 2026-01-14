@@ -1,336 +1,339 @@
 const API_URL = "Your API Endpoint";
 const API_KEY = "Your API Key";
 
-const CACHE_FILE = "token_history_braun_api_v7.json";
+const FORCE_APPEARANCE = null; // "light" or "dark" or null
+const CACHE_TTL_MS = 60 * 60 * 1000;
+const REFRESH_MINUTES = 10;
+const CACHE_FILE_NAME = "token_heatmap_v3_auto_range.json";
 
-const BRAUN = {
-  orange: new Color("#ea5b0c"),
-  dark: {
-    bg: new Color("#161616"),
-    surface: new Color("#222222"),
-    text: new Color("#e0e0e0"),
-    bar: new Color("#3a3a3a"),
-    grid: new Color("#2a2a2a"),
-    axis: new Color("#6a6a6a"),
-    capsuleBg: new Color("#333333"),
-    capsuleText: new Color("#ffffff")
-  },
-  light: {
-    bg: new Color("#f4f4f4"),
-    surface: new Color("#ffffff"),
-    text: new Color("#111111"),
-    bar: new Color("#d8d8d8"),
-    grid: new Color("#e5e5e5"),
-    axis: new Color("#8d8d8d"),
-    capsuleBg: new Color("#000000"),
-    capsuleText: new Color("#ffffff")
+const THEME = {
+  bg: { light: "#ffffff", dark: "#0d1117" },
+  text: { light: "#24292f", dark: "#c9d1d9" },
+  subtleText: { light: "#57606a", dark: "#8b949e" },
+  todayStroke: { light: "#000000", dark: "#ffffff" },
+  stripes: { light: 0.04, dark: 0.035 },
+  cells: {
+    future: { light: "#ebedf0", dark: "#161b22" },
+    level0: { light: "#ebedf0", dark: "#161b22" },
+    level1: { light: "#9be9a8", dark: "#0e4429" },
+    level2: { light: "#30a14e", dark: "#006d32" },
+    level3: { light: "#216e39", dark: "#26a641" }
   }
 };
+
+const LAYOUT = {
+  weeks: 26, 
+  boxSize: 16,
+  gap: 4,
+  startX: 10,
+  startY: 30,
+  widthPad: 20,
+  height: 220
+};
+
+const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
+
+const UI = (() => {
+  const forced =
+    FORCE_APPEARANCE === "dark" ? "dark" :
+    FORCE_APPEARANCE === "light" ? "light" : null;
+
+  const c = (obj) => forced
+    ? new Color(obj[forced])
+    : dyn(obj.light, obj.dark);
+
+  const cell = (k) => forced
+    ? new Color(THEME.cells[k][forced])
+    : dyn(THEME.cells[k].light, THEME.cells[k].dark);
+
+  const alpha = forced
+    ? THEME.stripes[forced]
+    : null;
+
+  return {
+    forced,
+    bg: c(THEME.bg),
+    text: c(THEME.text),
+    subtleText: c(THEME.subtleText),
+    todayStroke: c(THEME.todayStroke),
+    cell,
+    stripesColor: forced
+      ? new Color("#888888", alpha)
+      : Color.dynamic(
+          new Color("#888888", THEME.stripes.light),
+          new Color("#888888", THEME.stripes.dark)
+        )
+  };
+})();
 
 if (config.runsInWidget) {
   const widget = await createWidget();
   Script.setWidget(widget);
 } else {
   const widget = await createWidget();
-  await widget.presentMedium();
+  widget.presentMedium();
 }
 Script.complete();
 
 async function createWidget() {
   const w = new ListWidget();
-  w.backgroundColor = Color.dynamic(BRAUN.light.bg, BRAUN.dark.bg);
-  w.backgroundImage = createUnifiedStripes();
-  w.setPadding(12, 10, 8, 10);
-
-  const data = await get7DayData();
+  w.backgroundColor = UI.bg;
+  w.backgroundImage = createTransparentStripes();
+  w.setPadding(12, 18, 12, 12);
+  w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
 
   const header = w.addStack();
   header.layoutHorizontally();
-  header.addSpacer();
-  const title = header.addText("本周每日 Token 使用情况");
-  title.font = Font.heavySystemFont(10);
-  title.textColor = new Color("#888888");
-  header.addSpacer();
+  header.centerAlignContent();
 
-  w.addSpacer(4);
+  const title = header.addText("Token 使用分布");
+  title.font = Font.heavySystemFont(12);
+  title.textColor = UI.text;
 
-  const chart = drawBraunChart(data);
-  const img = w.addImage(chart);
+  header.addSpacer();
+  w.addSpacer(8);
+
+  const dataMap = await getHistoryData();
+  const chartImage = drawSixMonthHeatmap(dataMap);
+  const img = w.addImage(chartImage);
+  img.applyFittingContentMode();
   img.centerAlignImage();
 
-  w.addSpacer();
   return w;
 }
 
-function drawBraunChart(data) {
-  const isDark = Device.isUsingDarkAppearance();
-  const palette = isDark ? BRAUN.dark : BRAUN.light;
-  const capsuleBgColor = palette.capsuleBg;
-  const capsuleTextColor = palette.capsuleText;
-
-  const W = 1200;
-  const H = 600;
+function drawSixMonthHeatmap(dataMap) {
+  const { weeks, boxSize, gap, startX, startY, widthPad, height } = LAYOUT;
+  const W = startX + weeks * (boxSize + gap) + widthPad;
+  const H = height;
 
   const ctx = new DrawContext();
   ctx.size = new Size(W, H);
   ctx.opaque = false;
-  ctx.respectScreenScale = false;
+  ctx.respectScreenScale = true;
 
-  const margin = { top: 70, bottom: 90, left: 40, right: 40 };
-  const graphW = W - margin.left - margin.right;
-  const graphH = H - margin.top - margin.bottom;
+  const SCALE = Device.screenScale();
+  const px = (v) => Math.round(v * SCALE) / SCALE;
 
-  const vals = data.map(d => Number(d.val) || 0);
-  const maxVal = Math.max(...vals, 0);
-  const { step, maxScale } = niceScale(maxVal);
+  const now = new Date();
+  const todayKey = formatDateKey(now);
 
-  const gridCount = Math.max(2, Math.round(maxScale / step));
-  for (let i = 0; i <= gridCount; i++) {
-    const v = i * step;
-    const y = margin.top + graphH - (v / maxScale) * graphH;
+  const gridStartDate = startOfWeek(addDays(now, -((weeks - 1) * 7)));
 
-    const p = new Path();
-    p.move(new Point(margin.left, y));
-    p.addLine(new Point(W - margin.right, y));
+  let lastLabelMonth = -1;
+  let lastLabelX = -50;
 
-    if (i === 0) {
-      ctx.setStrokeColor(palette.axis);
-      ctx.setLineWidth(4);
-    } else {
-      ctx.setStrokeColor(palette.grid);
-      ctx.setLineWidth(2);
-    }
-    ctx.addPath(p);
-    ctx.strokePath();
-  }
+  for (let col = 0; col < weeks; col++) {
+    for (let row = 0; row < 7; row++) {
+      const d = addDays(gridStartDate, col * 7 + row);
+      const dateKey = formatDateKey(d);
+      
+      const val = dataMap[dateKey] || 0;
 
-  const numBars = Math.max(1, data.length);
-  const rawBarW = graphW / (numBars * 2.2);
-  const barWidth = clamp(Math.round(rawBarW), 36, 78);
-  const totalBarW = numBars * barWidth;
-  const gap = (graphW - totalBarW) / (numBars + 1);
+      const x = px(startX + col * (boxSize + gap));
+      const y = px(startY + row * (boxSize + gap));
+      const rect = new Rect(x, y, boxSize, boxSize);
 
-  const linkColor = isDark ? new Color("#ffffff", 0.22) : new Color("#000000", 0.16);
-  const todayIndex = numBars - 1;
-
-  for (let i = 0; i < numBars; i++) {
-    const item = data[i];
-    const v = Math.max(0, Number(item.val) || 0);
-
-    const x = margin.left + gap + i * (barWidth + gap);
-    const h = (v / maxScale) * graphH;
-    const barH = v > 0 ? Math.max(2, h) : 0;
-    const y = margin.top + graphH - barH;
-
-    const isToday = i === todayIndex;
-    const fill = isToday ? BRAUN.orange : palette.bar;
-
-    drawTopRoundedBar(ctx, new Rect(x, y, barWidth, barH), fill, 14);
-
-    if (isToday) {
-      const valStr = formatToM(v);
-
-      ctx.setFont(Font.heavySystemFont(36));
-      const tSize = safeTextSize(ctx, valStr);
-
-      const padX = 18, padY = 10;
-      const tagW = Math.ceil(tSize.width + padX * 2);
-      const tagH = Math.ceil(tSize.height + padY * 2);
-
-      let tagX = x + barWidth / 2 - tagW / 2;
-      tagX = clamp(tagX, margin.left, W - margin.right - tagW);
-
-      let tagY = y - tagH - 16;
-      tagY = Math.max(6, tagY);
-
-      const midX = x + barWidth / 2;
-      const lineTop = tagY + tagH;
-      const lineBot = y - 6;
-      if (lineBot > lineTop + 4) {
-        const lp = new Path();
-        lp.move(new Point(midX, lineTop));
-        lp.addLine(new Point(midX, lineBot));
-        ctx.setStrokeColor(linkColor);
-        ctx.setLineWidth(3);
-        ctx.addPath(lp);
-        ctx.strokePath();
+      if (row === 0) {
+        const m = d.getMonth();
+        if (m !== lastLabelMonth && (x - lastLabelX > 25)) {
+          ctx.setFont(Font.boldSystemFont(16));
+          ctx.setTextColor(UI.subtleText);
+          ctx.drawText(getMonthName(m), new Point(x, 5));
+          lastLabelMonth = m;
+          lastLabelX = x;
+        }
       }
 
-      const tagRect = new Rect(tagX, tagY, tagW, tagH);
-      const tagPath = new Path();
+      const path = new Path();
+      path.addRoundedRect(rect, 3, 3);
+      ctx.addPath(path);
 
-      const capsuleRadius = clamp(Math.floor(tagH * 0.3), 12, Math.floor(tagH / 2));
-      tagPath.addRoundedRect(tagRect, capsuleRadius, capsuleRadius);
+      const isFuture = dateKey > todayKey;
+      if (isFuture) {
+        ctx.setStrokeColor(UI.cell("future"));
+        ctx.setLineWidth(1); // 稍微细一点
+        ctx.strokePath();
+        continue;
+      }
 
-      ctx.setFillColor(capsuleBgColor);
-      ctx.addPath(tagPath);
+      ctx.setFillColor(levelColor(val));
       ctx.fillPath();
 
-      ctx.setTextColor(capsuleTextColor);
-      const ts = safeTextSize(ctx, valStr);
-      const textX = tagX + (tagW - ts.width) / 2;
-      const textY = tagY + (tagH - ts.height) / 2;
-
-      ctx.drawText(valStr, new Point(textX, textY - 3));
+      if (dateKey === todayKey) {
+        ctx.setStrokeColor(new Color(UI.todayStroke.hex, 0.6));
+        ctx.setLineWidth(3);
+        ctx.strokePath();
+      }
     }
-
-    ctx.setFont(Font.systemFont(30));
-    ctx.setTextColor(palette.axis);
-    ctx.setTextAlignedCenter();
-    const dateLabel = normalizeToMMDD(item.date);
-    const dateRect = new Rect(x - 18, margin.top + graphH + 18, barWidth + 36, 44);
-    ctx.drawTextInRect(dateLabel, dateRect);
   }
 
+  drawInternalLegend(ctx, W, H);
   return ctx.getImage();
 }
 
-function drawTopRoundedBar(ctx, rect, color, radius) {
-  if (rect.height <= 0 || rect.width <= 0) return;
+function levelColor(val) {
+  if (val === 0) return UI.cell("level0");
+  if (val < 500000) return UI.cell("level1");
+  if (val < 1000000) return UI.cell("level2");
+  return UI.cell("level3");
+}
 
-  const r = Math.min(radius, rect.width / 2, rect.height / 2);
+function drawInternalLegend(ctx, W, H) {
+  const legendSize = 12;
+  const legendGap = 4;
+  const rightMargin = -10;
+  const bottomMargin = 10;
 
-  const p = new Path();
-  p.addRoundedRect(rect, r, r);
-  ctx.setFillColor(color);
-  ctx.addPath(p);
-  ctx.fillPath();
+  const items = [
+    UI.cell("level0"),
+    UI.cell("level1"),
+    UI.cell("level2"),
+    UI.cell("level3")
+  ];
 
-  const coverY = rect.y + r;
-  const coverH = Math.max(0, rect.height - r);
-  if (coverH > 0) {
-    ctx.fillRect(new Rect(rect.x, coverY, rect.width, coverH));
+  const totalW = items.length * legendSize + (items.length - 1) * legendGap + 80;
+  const startX = W - totalW - rightMargin;
+  const startY = H - legendSize - bottomMargin;
+
+  ctx.setFont(Font.heavySystemFont(12));
+  ctx.setTextColor(UI.subtleText);
+  ctx.drawText("轻度", new Point(startX, startY - 2));
+
+  let x = startX + 35;
+  for (const c of items) {
+    const rect = new Rect(x, startY, legendSize, legendSize);
+    ctx.setFillColor(c);
+    const p = new Path();
+    p.addRoundedRect(rect, 2, 2);
+    ctx.addPath(p);
+    ctx.fillPath();
+    x += legendSize + legendGap;
   }
+
+  ctx.drawText(" 重度", new Point(x + 2, startY - 2));
 }
 
-function createUnifiedStripes() {
-  const ctx = new DrawContext();
-  ctx.size = new Size(1200, 600);
-  ctx.opaque = false;
-  ctx.respectScreenScale = false;
-
-  const lightColor = new Color("#000000", 0.04);
-  const darkColor = new Color("#ffffff", 0.05);
-  const stripeColor = Color.dynamic(lightColor, darkColor);
-
-  const gap = 12;
-  const lineWidth = 3;
-
-  ctx.setFillColor(stripeColor);
-  for (let x = 0; x < ctx.size.width; x += gap) {
-    ctx.fillRect(new Rect(x, 0, lineWidth, ctx.size.height));
-  }
-  return ctx.getImage();
-}
-
-function formatToM(num) {
-  const n = Number(num) || 0;
-  return (n / 1e6).toFixed(1) + "M";
-}
-
-function niceScale(maxVal) {
-  const minScale = 100000;
-  const m = Math.max(Number(maxVal) || 0, minScale);
-
-  const targetLines = 5;
-  const rawStep = m / targetLines;
-
-  const step = niceStep(rawStep);
-  let maxScale = Math.ceil(m / step) * step;
-
-  maxScale = Math.ceil(maxScale * 1.06);
-  maxScale = Math.ceil(maxScale / step) * step;
-
-  return { step, maxScale };
-}
-
-function niceStep(x) {
-  const exp = Math.floor(Math.log10(x));
-  const base = x / Math.pow(10, exp);
-  let niceBase;
-
-  if (base <= 1) niceBase = 1;
-  else if (base <= 2) niceBase = 2;
-  else if (base <= 5) niceBase = 5;
-  else niceBase = 10;
-
-  return niceBase * Math.pow(10, exp);
-}
-
-async function get7DayData() {
+async function getHistoryData() {
   const fm = FileManager.local();
-  const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_FILE);
+  const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_FILE_NAME);
 
-  let history = [];
+  const readCache = () => {
+    if (!fm.fileExists(cachePath)) return null;
+    try { return JSON.parse(fm.readString(cachePath)); } catch { return null; }
+  };
+
+  const cache = readCache();
+  const nowTs = Date.now();
+  if (cache?.ts && cache?.data && (nowTs - cache.ts) < CACHE_TTL_MS) return cache.data;
 
   try {
     const req = new Request(API_URL);
-    req.headers = { "X-N8N-API-KEY": API_KEY };
-    req.timeoutInterval = 8;
+    req.headers = { 
+        "X-N8N-API-KEY": API_KEY,
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Accept": "application/json"
+    };
+    req.timeoutInterval = 15;
 
-    const json = await req.loadJSON();
-
-    let raw = [];
-    if (json && Array.isArray(json.history_7d)) raw = json.history_7d;
-    else if (Array.isArray(json)) raw = json;
-    else if (json) raw = [json];
-
-    history = raw
-      .map(item => {
-        const val = item?.val ?? item?.today ?? item?.tokens ?? 0;
-        const dateStr = item?.date ?? formatMMDD(new Date());
-        return { date: normalizeToMMDD(dateStr), val: toInt(val) };
-      })
-      .filter(x => x.date && Number.isFinite(x.val));
-
-    history.sort((a, b) => (a.date > b.date ? 1 : -1));
-    if (history.length > 7) history = history.slice(history.length - 7);
-
-    if (history.length > 0) fm.writeString(cachePath, JSON.stringify(history));
-  } catch (e) {
-    if (fm.fileExists(cachePath)) {
-      try { history = JSON.parse(fm.readString(cachePath)) || []; } catch (_) {}
+    console.log("Fetching full history...");
+    const rawString = await req.loadString();
+    
+    if (rawString.includes("Authorization data is wrong")) {
+        throw new Error("API Key 错误");
     }
+
+    const json = JSON.parse(rawString);
+    const root = Array.isArray(json) && json.length > 0 ? json[0] : json;
+
+    let targetArray = [];
+    
+    const candidates = [
+        root.history,
+        root.history_all,
+        root.history_365d,
+        root.history_180d,
+        root.history_90d,
+        root.history_30d,
+        root.history_7d,
+        json
+    ];
+
+    for (const c of candidates) {
+        if (Array.isArray(c) && c.length > targetArray.length) {
+            targetArray = c;
+        }
+    }
+
+    console.log(`Found best data source with ${targetArray.length} items.`);
+
+    const map = {};
+    for (const item of targetArray) {
+      let d = item?.date || "";
+      if (d.includes("/")) d = d.replace(/\//g, "-");
+      
+      const v = item?.val ?? item?.today ?? item?.tokens ?? 0;
+      
+      if (d && d.length >= 10) {
+          map[d.substring(0, 10)] = (Number.parseInt(v, 10) || 0);
+      }
+    }
+
+    const todayKey = formatDateKey(new Date());
+    if (map[todayKey] === undefined) {
+        let liveVal = root.today ?? 0;
+        map[todayKey] = Number.parseInt(liveVal, 10) || 0;
+    }
+
+    if (Object.keys(map).length > 0) {
+        fm.writeString(cachePath, JSON.stringify({ ts: nowTs, data: map }));
+    }
+    
+    return map;
+  } catch (e) {
+    console.error("Fetch Error: " + e.message);
+    return cache?.data || {};
   }
-
-  if (!history || history.length === 0) return [{ date: "Demo", val: 1000000 }];
-  return history;
 }
 
-function normalizeToMMDD(s) {
-  if (!s) return formatMMDD(new Date());
-  const str = String(s).trim();
+function createTransparentStripes() {
+  const ctx = new DrawContext();
+  const W = 600, H = 400;
+  ctx.size = new Size(W, H);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
 
-  if (/^\d{2}-\d{2}$/.test(str)) return str;
+  const SCALE = Device.screenScale();
+  const px = (v) => Math.round(v * SCALE) / SCALE;
 
-  const m1 = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m1) return `${m1[2]}-${m1[3]}`;
+  const gap = 8;
+  const lineW = 2;
 
-  const m2 = str.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
-  if (m2) return `${m2[2]}-${m2[3]}`;
-
-  return str.slice(0, 5);
+  ctx.setFillColor(UI.stripesColor);
+  for (let x = 0; x < W; x += gap) ctx.fillRect(new Rect(px(x), 0, lineW, H));
+  return ctx.getImage();
 }
 
-function formatMMDD(date) {
-  const df = new DateFormatter();
-  df.dateFormat = "MM-dd";
-  return df.string(date);
+function getMonthName(i) {
+  return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i] || "";
 }
 
-function toInt(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.round(n));
+function formatDateKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
-function clamp(x, a, b) {
-  return Math.max(a, Math.min(b, x));
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
 }
 
-function safeTextSize(ctx, text) {
-  try {
-    if (typeof ctx.sizeOfText === "function") return ctx.sizeOfText(text);
-  } catch (_) {}
-  return new Size(text.length * 22, 38);
+function startOfWeek(date) {
+  const d = new Date(date);
+  d.setDate(d.getDate() - d.getDay());
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
