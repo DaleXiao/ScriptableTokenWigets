@@ -1,24 +1,31 @@
 const API_URL = "Your API Endpoint";
 const API_KEY = "Your API Key";
 
-const FORCE_APPEARANCE = null; // "light" or "dark" or null
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const REFRESH_MINUTES = 10;
 const CACHE_FILE_NAME = "token_heatmap_v3_auto_range.json";
 
-const THEME = {
-  bg: { light: "#ffffff", dark: "#0d1117" },
-  text: { light: "#24292f", dark: "#c9d1d9" },
-  subtleText: { light: "#57606a", dark: "#8b949e" },
-  todayStroke: { light: "#000000", dark: "#ffffff" },
-  stripes: { light: 0.04, dark: 0.035 },
+const UI_THEME = {
+  bg: Color.dynamic(new Color("#ffffff"), new Color("#0d1117")),
+  text: Color.dynamic(new Color("#24292f"), new Color("#c9d1d9")),
+};
+
+const CHART_PALETTE = {
+  text: new Color("#888888"),
+  
+  stripes: new Color("#888888", 0.05),
+
   cells: {
-    future: { light: "#ebedf0", dark: "#161b22" },
-    level0: { light: "#ebedf0", dark: "#161b22" },
-    level1: { light: "#9be9a8", dark: "#0e4429" },
-    level2: { light: "#30a14e", dark: "#006d32" },
-    level3: { light: "#216e39", dark: "#26a641" }
-  }
+    level0: new Color("#888888", 0.15),
+    
+    futureStroke: new Color("#888888", 0.1),
+
+    level1: new Color("#9be9a8"), 
+    level2: new Color("#40c463"),
+    level3: new Color("#30a14e"),
+  },
+  
+  todayStroke: new Color("#888888", 0.8)
 };
 
 const LAYOUT = {
@@ -31,41 +38,6 @@ const LAYOUT = {
   height: 220
 };
 
-const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
-
-const UI = (() => {
-  const forced =
-    FORCE_APPEARANCE === "dark" ? "dark" :
-    FORCE_APPEARANCE === "light" ? "light" : null;
-
-  const c = (obj) => forced
-    ? new Color(obj[forced])
-    : dyn(obj.light, obj.dark);
-
-  const cell = (k) => forced
-    ? new Color(THEME.cells[k][forced])
-    : dyn(THEME.cells[k].light, THEME.cells[k].dark);
-
-  const alpha = forced
-    ? THEME.stripes[forced]
-    : null;
-
-  return {
-    forced,
-    bg: c(THEME.bg),
-    text: c(THEME.text),
-    subtleText: c(THEME.subtleText),
-    todayStroke: c(THEME.todayStroke),
-    cell,
-    stripesColor: forced
-      ? new Color("#888888", alpha)
-      : Color.dynamic(
-          new Color("#888888", THEME.stripes.light),
-          new Color("#888888", THEME.stripes.dark)
-        )
-  };
-})();
-
 if (config.runsInWidget) {
   const widget = await createWidget();
   Script.setWidget(widget);
@@ -77,7 +49,7 @@ Script.complete();
 
 async function createWidget() {
   const w = new ListWidget();
-  w.backgroundColor = UI.bg;
+  w.backgroundColor = UI_THEME.bg;
   w.backgroundImage = createTransparentStripes();
   w.setPadding(12, 18, 12, 12);
   w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
@@ -88,7 +60,7 @@ async function createWidget() {
 
   const title = header.addText("Token 使用分布");
   title.font = Font.heavySystemFont(12);
-  title.textColor = UI.text;
+  title.textColor = UI_THEME.text;
 
   header.addSpacer();
   w.addSpacer(8);
@@ -138,7 +110,7 @@ function drawSixMonthHeatmap(dataMap) {
         const m = d.getMonth();
         if (m !== lastLabelMonth && (x - lastLabelX > 25)) {
           ctx.setFont(Font.boldSystemFont(16));
-          ctx.setTextColor(UI.subtleText);
+          ctx.setTextColor(CHART_PALETTE.text);
           ctx.drawText(getMonthName(m), new Point(x, 5));
           lastLabelMonth = m;
           lastLabelX = x;
@@ -151,8 +123,8 @@ function drawSixMonthHeatmap(dataMap) {
 
       const isFuture = dateKey > todayKey;
       if (isFuture) {
-        ctx.setStrokeColor(UI.cell("future"));
-        ctx.setLineWidth(1); // 稍微细一点
+        ctx.setStrokeColor(CHART_PALETTE.cells.futureStroke);
+        ctx.setLineWidth(1); 
         ctx.strokePath();
         continue;
       }
@@ -161,7 +133,7 @@ function drawSixMonthHeatmap(dataMap) {
       ctx.fillPath();
 
       if (dateKey === todayKey) {
-        ctx.setStrokeColor(new Color(UI.todayStroke.hex, 0.6));
+        ctx.setStrokeColor(CHART_PALETTE.todayStroke);
         ctx.setLineWidth(3);
         ctx.strokePath();
       }
@@ -173,10 +145,10 @@ function drawSixMonthHeatmap(dataMap) {
 }
 
 function levelColor(val) {
-  if (val === 0) return UI.cell("level0");
-  if (val < 500000) return UI.cell("level1");
-  if (val < 1000000) return UI.cell("level2");
-  return UI.cell("level3");
+  if (val === 0) return CHART_PALETTE.cells.level0;
+  if (val < 500000) return CHART_PALETTE.cells.level1;
+  if (val < 1000000) return CHART_PALETTE.cells.level2;
+  return CHART_PALETTE.cells.level3;
 }
 
 function drawInternalLegend(ctx, W, H) {
@@ -186,10 +158,10 @@ function drawInternalLegend(ctx, W, H) {
   const bottomMargin = 10;
 
   const items = [
-    UI.cell("level0"),
-    UI.cell("level1"),
-    UI.cell("level2"),
-    UI.cell("level3")
+    CHART_PALETTE.cells.level0,
+    CHART_PALETTE.cells.level1,
+    CHART_PALETTE.cells.level2,
+    CHART_PALETTE.cells.level3
   ];
 
   const totalW = items.length * legendSize + (items.length - 1) * legendGap + 80;
@@ -197,7 +169,7 @@ function drawInternalLegend(ctx, W, H) {
   const startY = H - legendSize - bottomMargin;
 
   ctx.setFont(Font.heavySystemFont(12));
-  ctx.setTextColor(UI.subtleText);
+  ctx.setTextColor(CHART_PALETTE.text);
   ctx.drawText("轻度", new Point(startX, startY - 2));
 
   let x = startX + 35;
@@ -236,7 +208,6 @@ async function getHistoryData() {
     };
     req.timeoutInterval = 15;
 
-    console.log("Fetching full history...");
     const rawString = await req.loadString();
     
     if (rawString.includes("Authorization data is wrong")) {
@@ -264,8 +235,6 @@ async function getHistoryData() {
             targetArray = c;
         }
     }
-
-    console.log(`Found best data source with ${targetArray.length} items.`);
 
     const map = {};
     for (const item of targetArray) {
@@ -309,7 +278,7 @@ function createTransparentStripes() {
   const gap = 8;
   const lineW = 2;
 
-  ctx.setFillColor(UI.stripesColor);
+  ctx.setFillColor(CHART_PALETTE.stripes);
   for (let x = 0; x < W; x += gap) ctx.fillRect(new Rect(px(x), 0, lineW, H));
   return ctx.getImage();
 }
