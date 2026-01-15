@@ -2,50 +2,24 @@ const API_URL = "Your API Endpoint";
 const API_KEY = "Your API Key";
 
 const DAILY_GOAL = 1500000;
-
-const FORCE_APPEARANCE = null;
-
 const REFRESH_MINUTES = 10;
 const CACHE_FILE_NAME = "token_today_ring_v6_visible_stripes.json";
 
-const PALETTE = {
-  light: {
-    bg: new Color("#ffffff"),
-    textMain: new Color("#111111"),
-    textSub: new Color("#666666"),
-    ringBg: new Color("#f2d6dd"),
-    ringMain: new Color("#fa114f"),
-    ringShadow: new Color("#000000", 0.18),
-    success: new Color("#0a7f2e")
-  },
-  dark: {
-    bg: new Color("#000000"),
-    textMain: new Color("#ffffff"),
-    textSub: new Color("#888888"),
-    ringBg: new Color("#280c13"),
-    ringMain: new Color("#fa114f"),
-    ringShadow: new Color("#000000", 0.5),
-    success: new Color("#d4fc79")
-  }
-};
-
-const dyn = (lightColor, darkColor) => {
-  if (FORCE_APPEARANCE === "light") return lightColor;
-  if (FORCE_APPEARANCE === "dark") return darkColor;
-  return Color.dynamic(lightColor, darkColor);
-};
-
 const THEME = {
-  bg: dyn(PALETTE.light.bg, PALETTE.dark.bg),
-  textMain: dyn(PALETTE.light.textMain, PALETTE.dark.textMain),
-  textSub: dyn(PALETTE.light.textSub, PALETTE.dark.textSub),
-  success: dyn(PALETTE.light.success, PALETTE.dark.success)
+  bg: Color.dynamic(new Color("#ffffff"), new Color("#000000")),
+  textMain: Color.dynamic(new Color("#111111"), new Color("#ffffff")),
+  textSub: Color.dynamic(new Color("#666666"), new Color("#888888")),
+  success: Color.dynamic(new Color("#0a7f2e"), new Color("#d4fc79"))
 };
 
-const RING = {
-  bg: dyn(PALETTE.light.ringBg, PALETTE.dark.ringBg),
-  main: PALETTE.light.ringMain,
-  shadow: dyn(PALETTE.light.ringShadow, PALETTE.dark.ringShadow)
+const IMG_PALETTE = {
+  ringMain: new Color("#fa114f"),
+  
+  ringBg: new Color("#fa114f", 0.15), 
+
+  ringShadow: new Color("#000000", 0.3),
+  
+  stripes: new Color("#888888", 0.05) 
 };
 
 if (config.runsInWidget) {
@@ -137,10 +111,7 @@ function createVisibleStripes() {
   ctx.opaque = false;
   ctx.respectScreenScale = true;
 
-  const stripeColor = Color.dynamic(
-    new Color("#000000", 0.02),
-    new Color("#ffffff", 0.06)
-  );
+  const stripeColor = IMG_PALETTE.stripes;
 
   const lineWidth = 3; 
   const gap = 8;
@@ -168,7 +139,7 @@ function drawActivityRing(percent) {
   const radius = Math.round(size * 0.36);
   const strokeWidth = Math.round(size * 0.14);
 
-  ctx.setStrokeColor(RING.bg);
+  ctx.setStrokeColor(IMG_PALETTE.ringBg);
   ctx.setLineWidth(strokeWidth);
   const track = new Path();
   track.addEllipse(new Rect(center.x - radius, center.y - radius, radius * 2, radius * 2));
@@ -180,19 +151,19 @@ function drawActivityRing(percent) {
   const extra = clamp(percent - 1, 0, 1);
 
   if (base > 0) {
-    stampArc(ctx, center, radius, strokeWidth, startDeg, base * 360, RING.main);
+    stampArc(ctx, center, radius, strokeWidth, startDeg, base * 360, IMG_PALETTE.ringMain);
 
     if (base >= 1) {
       const endPt = pointOnCircle(center, radius, deg2rad(startDeg + 360));
-      fillCircle(ctx, new Point(endPt.x + 3, endPt.y), strokeWidth / 2, RING.shadow);
-      fillCircle(ctx, endPt, strokeWidth / 2, RING.main);
+      fillCircle(ctx, new Point(endPt.x + 3, endPt.y), strokeWidth / 2, IMG_PALETTE.ringShadow);
+      fillCircle(ctx, endPt, strokeWidth / 2, IMG_PALETTE.ringMain);
     }
   }
 
   if (extra > 0) {
-    stampArc(ctx, center, radius, strokeWidth, startDeg, extra * 360, RING.main);
+    stampArc(ctx, center, radius, strokeWidth, startDeg, extra * 360, IMG_PALETTE.ringMain);
     const endPt2 = pointOnCircle(center, radius, deg2rad(startDeg + extra * 360));
-    fillCircle(ctx, endPt2, strokeWidth / 2, RING.main);
+    fillCircle(ctx, endPt2, strokeWidth / 2, IMG_PALETTE.ringMain);
   }
 
   return ctx.getImage();
@@ -251,7 +222,6 @@ async function getTodayData() {
     };
     req.timeoutInterval = 15;
 
-    console.log("Fetching today's data...");
     const rawString = await req.loadString();
 
     if (rawString.includes("Authorization data is wrong")) {
