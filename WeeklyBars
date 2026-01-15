@@ -3,28 +3,23 @@ const API_KEY = "Your API Key";
 
 const CACHE_FILE = "token_history_braun_api_v7.json";
 
-const BRAUN = {
+const THEME_BG = Color.dynamic(new Color("#f4f4f4"), new Color("#161616"));
+
+const CHART_PALETTE = {
   orange: new Color("#ea5b0c"),
-  dark: {
-    bg: new Color("#161616"),
-    surface: new Color("#222222"),
-    text: new Color("#e0e0e0"),
-    bar: new Color("#3a3a3a"),
-    grid: new Color("#2a2a2a"),
-    axis: new Color("#6a6a6a"),
-    capsuleBg: new Color("#333333"),
-    capsuleText: new Color("#ffffff")
-  },
-  light: {
-    bg: new Color("#f4f4f4"),
-    surface: new Color("#ffffff"),
-    text: new Color("#111111"),
-    bar: new Color("#d8d8d8"),
-    grid: new Color("#e5e5e5"),
-    axis: new Color("#8d8d8d"),
-    capsuleBg: new Color("#000000"),
-    capsuleText: new Color("#ffffff")
-  }
+  
+  bar: new Color("#888888", 0.25), 
+  
+  grid: new Color("#888888", 0.15),
+  
+  axis: new Color("#888888"),
+  
+  linkLine: new Color("#888888", 0.4),
+
+  capsuleBg: new Color("#1a1a1a"), 
+  capsuleText: new Color("#ffffff"),
+  
+  stripes: new Color("#888888", 0.05)
 };
 
 if (config.runsInWidget) {
@@ -38,7 +33,7 @@ Script.complete();
 
 async function createWidget() {
   const w = new ListWidget();
-  w.backgroundColor = Color.dynamic(BRAUN.light.bg, BRAUN.dark.bg);
+  w.backgroundColor = THEME_BG;
   w.backgroundImage = createUnifiedStripes();
   w.setPadding(12, 10, 8, 10);
 
@@ -49,7 +44,7 @@ async function createWidget() {
   header.addSpacer();
   const title = header.addText("本周每日 Token 使用情况");
   title.font = Font.heavySystemFont(10);
-  title.textColor = new Color("#888888");
+  title.textColor = CHART_PALETTE.axis;
   header.addSpacer();
 
   w.addSpacer(4);
@@ -63,10 +58,6 @@ async function createWidget() {
 }
 
 function drawBraunChart(data) {
-  const isDark = Device.isUsingDarkAppearance();
-  const palette = isDark ? BRAUN.dark : BRAUN.light;
-  const capsuleBgColor = palette.capsuleBg;
-  const capsuleTextColor = palette.capsuleText;
 
   const W = 1200;
   const H = 600;
@@ -94,10 +85,10 @@ function drawBraunChart(data) {
     p.addLine(new Point(W - margin.right, y));
 
     if (i === 0) {
-      ctx.setStrokeColor(palette.axis);
+      ctx.setStrokeColor(CHART_PALETTE.axis);
       ctx.setLineWidth(4);
     } else {
-      ctx.setStrokeColor(palette.grid);
+      ctx.setStrokeColor(CHART_PALETTE.grid);
       ctx.setLineWidth(2);
     }
     ctx.addPath(p);
@@ -110,7 +101,6 @@ function drawBraunChart(data) {
   const totalBarW = numBars * barWidth;
   const gap = (graphW - totalBarW) / (numBars + 1);
 
-  const linkColor = isDark ? new Color("#ffffff", 0.22) : new Color("#000000", 0.16);
   const todayIndex = numBars - 1;
 
   for (let i = 0; i < numBars; i++) {
@@ -123,7 +113,7 @@ function drawBraunChart(data) {
     const y = margin.top + graphH - barH;
 
     const isToday = i === todayIndex;
-    const fill = isToday ? BRAUN.orange : palette.bar;
+    const fill = isToday ? CHART_PALETTE.orange : CHART_PALETTE.bar;
 
     drawTopRoundedBar(ctx, new Rect(x, y, barWidth, barH), fill, 14);
 
@@ -150,7 +140,7 @@ function drawBraunChart(data) {
         const lp = new Path();
         lp.move(new Point(midX, lineTop));
         lp.addLine(new Point(midX, lineBot));
-        ctx.setStrokeColor(linkColor);
+        ctx.setStrokeColor(CHART_PALETTE.linkLine);
         ctx.setLineWidth(3);
         ctx.addPath(lp);
         ctx.strokePath();
@@ -162,11 +152,11 @@ function drawBraunChart(data) {
       const capsuleRadius = clamp(Math.floor(tagH * 0.3), 12, Math.floor(tagH / 2));
       tagPath.addRoundedRect(tagRect, capsuleRadius, capsuleRadius);
 
-      ctx.setFillColor(capsuleBgColor);
+      ctx.setFillColor(CHART_PALETTE.capsuleBg);
       ctx.addPath(tagPath);
       ctx.fillPath();
 
-      ctx.setTextColor(capsuleTextColor);
+      ctx.setTextColor(CHART_PALETTE.capsuleText);
       const ts = safeTextSize(ctx, valStr);
       const textX = tagX + (tagW - ts.width) / 2;
       const textY = tagY + (tagH - ts.height) / 2;
@@ -175,7 +165,7 @@ function drawBraunChart(data) {
     }
 
     ctx.setFont(Font.systemFont(30));
-    ctx.setTextColor(palette.axis);
+    ctx.setTextColor(CHART_PALETTE.axis);
     ctx.setTextAlignedCenter();
     const dateLabel = normalizeToMMDD(item.date);
     const dateRect = new Rect(x - 18, margin.top + graphH + 18, barWidth + 36, 44);
@@ -188,19 +178,25 @@ function drawBraunChart(data) {
 function drawTopRoundedBar(ctx, rect, color, radius) {
   if (rect.height <= 0 || rect.width <= 0) return;
 
-  const r = Math.min(radius, rect.width / 2, rect.height / 2);
+  const r = Math.min(radius, rect.width / 2, rect.height);
 
+  const x = rect.x;
+  const y = rect.y;
+  const w = rect.width;
+  const h = rect.height;
   const p = new Path();
-  p.addRoundedRect(rect, r, r);
+  
+  p.move(new Point(x, y + h));
+  p.addLine(new Point(x, y + r));
+  p.addQuadCurve(new Point(x + r, y), new Point(x, y));
+  p.addLine(new Point(x + w - r, y));
+  p.addQuadCurve(new Point(x + w, y + r), new Point(x + w, y));
+  p.addLine(new Point(x + w, y + h));
+  p.closeSubpath();
+
   ctx.setFillColor(color);
   ctx.addPath(p);
   ctx.fillPath();
-
-  const coverY = rect.y + r;
-  const coverH = Math.max(0, rect.height - r);
-  if (coverH > 0) {
-    ctx.fillRect(new Rect(rect.x, coverY, rect.width, coverH));
-  }
 }
 
 function createUnifiedStripes() {
@@ -209,9 +205,7 @@ function createUnifiedStripes() {
   ctx.opaque = false;
   ctx.respectScreenScale = false;
 
-  const lightColor = new Color("#000000", 0.04);
-  const darkColor = new Color("#ffffff", 0.05);
-  const stripeColor = Color.dynamic(lightColor, darkColor);
+  const stripeColor = CHART_PALETTE.stripes;
 
   const gap = 12;
   const lineWidth = 3;
