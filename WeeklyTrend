@@ -6,45 +6,22 @@ const SMOOTHING_RATIO = 0.2;
 const REFRESH_MINUTES = 10;
 const CACHE_FILE = "token_history_braun_final_key.json";
 
-const BRAUN = {
-  orange: new Color("#ea5b0c"),
-  dark: {
-    bg: new Color("#161616"),
-    surface: new Color("#222222"),
-    text: new Color("#e0e0e0"),
-    grid: new Color("#2a2a2a"),
-    axis: new Color("#555555"),
-    capsuleBg: new Color("#ea5b0c"),
-    capsuleText: new Color("#ffffff"),
-    capsuleBgGray: new Color("#2a2a2a"),
-    capsuleTextGray: new Color("#999999")
-  },
-  light: {
-    bg: new Color("#f4f4f4"),
-    surface: new Color("#ffffff"),
-    text: new Color("#111111"),
-    grid: new Color("#e5e5e5"),
-    axis: new Color("#999999"),
-    capsuleBg: new Color("#ea5b0c"),
-    capsuleText: new Color("#ffffff"),
-    capsuleBgGray: new Color("#e5e5e5"),
-    capsuleTextGray: new Color("#666666")
-  }
+const THEME = {
+  bg: Color.dynamic(new Color("#f4f4f4"), new Color("#161616")),
+  title: Color.dynamic(new Color("#888888"), new Color("#888888")), 
 };
 
-const dyn = (l, d) => Color.dynamic(l, d);
+const CHART_PALETTE = {
+  active: new Color("#ea5b0c"), 
+  grid: new Color("#888888", 0.15),
+  axis: new Color("#8e8e93"), 
+  
+  dotFill: new Color("#e5e5e5"), 
 
-const THEME = {
-  bg: dyn(BRAUN.light.bg, BRAUN.dark.bg),
-  surface: dyn(BRAUN.light.surface, BRAUN.dark.surface),
-  text: dyn(BRAUN.light.text, BRAUN.dark.text),
-  grid: dyn(BRAUN.light.grid, BRAUN.dark.grid),
-  axis: dyn(BRAUN.light.axis, BRAUN.dark.axis),
-  capsuleBg: BRAUN.orange,
-  capsuleText: dyn(BRAUN.light.capsuleText, BRAUN.dark.capsuleText),
-  capsuleBgGray: dyn(BRAUN.light.capsuleBgGray, BRAUN.dark.capsuleBgGray),
-  capsuleTextGray: dyn(BRAUN.light.capsuleTextGray, BRAUN.dark.capsuleTextGray),
-  active: BRAUN.orange
+  capsuleBgCommon: new Color("#888888", 0.15),
+  capsuleTextCommon: new Color("#8e8e93"),
+  capsuleBgHighlight: new Color("#ea5b0c"),
+  capsuleTextHighlight: new Color("#ffffff")
 };
 
 if (config.runsInWidget) {
@@ -60,7 +37,7 @@ async function createWidget() {
   const w = new ListWidget();
   const family = config.widgetFamily || "medium";
 
-  w.backgroundColor = THEME.bg;
+  w.backgroundColor = THEME.bg; 
   w.backgroundImage = createStripes(family);
   w.setPadding(8, 10, 8, 10);
   w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
@@ -77,9 +54,9 @@ async function createWidget() {
   const header = w.addStack();
   header.layoutHorizontally();
   header.addSpacer();
-  const title = header.addText("本周 Token 使用趋势");
+  const title = header.addText("近 7 天 Token 使用趋势");
   title.font = Font.heavySystemFont(Math.round(36 * FONT_SCALE));
-  title.textColor = new Color("#888888");
+  title.textColor = THEME.title;
   header.addSpacer();
 
   w.addSpacer(20);
@@ -113,7 +90,6 @@ async function get7DayData() {
     };
     req.timeoutInterval = 15; 
     
-    console.log("☁️ Requesting Data...");
     const rawString = await req.loadString();
     
     if (rawString.includes("Authorization data is wrong")) {
@@ -139,7 +115,6 @@ async function get7DayData() {
             }
             return { date: dStr, val: isNaN(v) ? 0 : v };
         });
-        console.log(`✅ Success! Got ${history.length} items.`);
     }
 
     history.sort((a, b) => (a.date > b.date ? 1 : -1));
@@ -204,8 +179,8 @@ function drawBraunWaveChart(data, W, H) {
   let minScale = 0;
 
   const range = Math.max(stepValue, maxScale - minScale);
-
   const hairline = 1 / SCALE;
+
   for (let v = minScale; v <= maxScale; v += stepValue) {
     if (v === maxScale) continue; 
     const y = px(margin.top + graphH - ((v - minScale) / range) * graphH);
@@ -216,7 +191,7 @@ function drawBraunWaveChart(data, W, H) {
 
     ctx.addPath(path);
     ctx.setLineWidth(hairline);
-    ctx.setStrokeColor(v === 0 ? new Color("#888888", 0.4) : THEME.grid);
+    ctx.setStrokeColor(v === 0 ? new Color("#888888", 0.4) : CHART_PALETTE.grid);
     ctx.strokePath();
   }
 
@@ -261,32 +236,33 @@ function drawBraunWaveChart(data, W, H) {
       pathLine.addCurve(new Point(pEnd.x, pEnd.y), new Point(cp1.x, cp1.y), new Point(cp2.x, cp2.y));
     }
     
-    ctx.setStrokeColor(THEME.active);
+    ctx.setStrokeColor(CHART_PALETTE.active);
     ctx.setLineWidth(3);
     ctx.addPath(pathLine);
     ctx.strokePath();
   }
 
-  const dotSize = Math.max(4, Math.round(H * 0.065));
+  const dotSize = Math.max(5, Math.round(H * 0.055));
   
   for (let index = 0; index < points.length; index++) {
     const p = points[index];
     const isToday = index === points.length - 1;
 
     const dotRect = new Rect(px(p.x - dotSize / 2), px(p.y - dotSize / 2), dotSize, dotSize);
-    ctx.setFillColor(THEME.bg);
-    ctx.fillEllipse(dotRect);
     
+    ctx.setFillColor(CHART_PALETTE.dotFill);
+    ctx.fillEllipse(dotRect);
+
     const strokePath = new Path();
     strokePath.addEllipse(dotRect);
     ctx.addPath(strokePath);
-    ctx.setStrokeColor(THEME.active);
+    ctx.setStrokeColor(CHART_PALETTE.active);
     ctx.setLineWidth(2);
     ctx.strokePath();
 
     const dateFontSize = Math.max(9, Math.round(H * 0.10 * FONT_SCALE));
     ctx.setFont(Font.boldSystemFont(dateFontSize));
-    ctx.setTextColor(THEME.axis);
+    ctx.setTextColor(CHART_PALETTE.axis);
     ctx.setTextAlignedCenter();
     const dateRect = new Rect(px(p.x - 28), px(H - margin.bottom + 2), 56, margin.bottom - 4);
     ctx.drawTextInRect(p.date, dateRect);
@@ -310,14 +286,14 @@ function drawBraunWaveChart(data, W, H) {
     const bgRect = new Rect(tagX, tagY, textWidth, tagH);
     const cornerRadius = tagH * 0.35;
     
-    ctx.setFillColor(isToday ? THEME.capsuleBg : THEME.capsuleBgGray);
+    ctx.setFillColor(isToday ? CHART_PALETTE.capsuleBgHighlight : CHART_PALETTE.capsuleBgCommon);
     const tagPath = new Path();
     tagPath.addRoundedRect(bgRect, cornerRadius, cornerRadius);
     ctx.addPath(tagPath);
     ctx.fillPath();
 
     ctx.setTextAlignedCenter();
-    ctx.setTextColor(isToday ? new Color("#ffffff") : THEME.capsuleTextGray);
+    ctx.setTextColor(isToday ? CHART_PALETTE.capsuleTextHighlight : CHART_PALETTE.capsuleTextCommon);
     const textRect = new Rect(tagX, px(tagY + 1), textWidth, tagH);
     ctx.drawTextInRect(valStr, textRect);
   }
@@ -336,17 +312,27 @@ function getControlPoint(pPrev, pCurr, pNext, isEnd, smoothing) {
 function createStripes(widgetFamily) {
   const scale = Device.screenScale();
   const px = (v) => Math.round(v * scale) / scale;
-  let wPt = 320, hPt = 160;
-  if (widgetFamily === "small") { wPt = 160; hPt = 160; }
-  else if (widgetFamily === "large") { wPt = 320; hPt = 340; }
-  else if (widgetFamily === "extraLarge") { wPt = 520; hPt = 260; }
+  
+  let wPt = 320;
+  let hPt = 160;
+
+  if (widgetFamily === "small") { 
+    wPt = 160; 
+    hPt = 160; 
+  } else if (widgetFamily === "large") { 
+    wPt = 320; 
+    hPt = 340; 
+  } else if (widgetFamily === "extraLarge") { 
+    wPt = 520; 
+    hPt = 260; 
+  }
 
   const ctx = new DrawContext();
   ctx.size = new Size(wPt, hPt);
   ctx.opaque = false;
   ctx.respectScreenScale = true;
 
-  const stripeColor = Color.dynamic(new Color("#888888", 0.04), new Color("#888888", 0.08));
+  const stripeColor = new Color("#888888", 0.04);
   const lineWidth = 2 / scale;
   const gap = 10 / scale;
 
